@@ -84,12 +84,68 @@ jobs:
         if: env.fail == 'false'
         run: |
           cd write
-          rm -rf net com
+          if [ -d "src/main/java" ]; then
+            rm -rf src/main/java
+          fi
+          mkdir -p src/main/java
+          if [ -d "src/main/resources" ]; then
+            rm -rf src/main/resources
+          fi
+          mkdir -p src/main/resources
           cd ..
 
-      - name: Decompile Minecraft file
+      - name: Decompile Minecraft file (CFR, No Rename)
+        if: env.fail == 'false' && env.decompiler == 'cfr' && env.rename_var != 'decompiler'
+        run: java -cp build/libs/gitmc.jar org.benf.cfr.reader.Main --silent true --outputdir write/src/main/java --comments false remapped.jar
+
+      - name: Decompile Minecraft file (CFR, Rename)
+        if: env.fail == 'false' && env.decompiler == 'cfr' && env.rename_var == 'decompiler'
+        run: java -cp build/libs/gitmc.jar org.benf.cfr.reader.Main --silent true --outputdir write/src/main/java --comments false --usenametable false remapped.jar
+
+      - name: Decompile Minecraft file (Fernflower)
+        if: env.fail == 'false' && env.decompiler == 'fernflower'
+        run: |
+          mkdir decompiled
+          java -cp build/libs/gitmc.jar org.jetbrains.java.decompiler.main.decompiler.ConsoleDecompiler -dgs=1 "-ind=    " -crp=1 -cps=1 -log=WARN remapped.jar decompiled
+          unzip -q -o decompiled/remapped.jar '*.java' -d write/src/main/java
+
+      - name: Resource files
         if: env.fail == 'false'
-        run: java -cp build/libs/gitmc.jar org.benf.cfr.reader.Main --silent true --outputdir write --comments false remapped.jar
+        run: |
+          unzip -q -o remapped.jar -x '*.class' -d write/src/main/resources
+          cd write/src/main/resources
+          for i in `find . -name "*.png" -type f`; do
+            sha1=`sha1sum $i | awk '{print $1}'`
+            echo $i $sha1 >> png-list.txt
+            rm $i
+          done
+          for i in `find . -name "*.bin" -type f`; do
+            rm $i
+          done
+          for i in `find . -name "*.zip" -type f`; do
+            rm $i
+          done
+
+      - name: Convert NBT to SNBT
+        if: env.fail == 'false'
+        run: |
+          mkdir tempServer
+          cd tempServer
+          wget https://piston-data.mojang.com/v1/objects/8dd1a28015f51b1803213892b50b7b4fc76e594d/server.jar
+          java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --dev --input ../write/src/main/resources --output snbt
+          cp -r snbt/* ../write/src/main/resources
+          cd ../write/src/main/resources
+          for i in `find . -name "*.nbt" -type f`; do
+            rm $i
+          done
+          for i in `find . -name "*.snbt" -type f`; do
+            sed -i '/DataVersion/d' $i
+          done
+
+      - name: Move Build Gradle
+        if: env.fail == 'false'
+        run: |
+          mv gen-build.gradle write/build.gradle
 
       - name: Switch Branch
         if: env.branch_read != env.branch_write
@@ -127,7 +183,7 @@ jobs:
           git add .
           git commit -m ${{ env.version }} -a
           cd ..
-          
+
       - name: Push version store file
         if: env.fail == 'false'
         uses: ad-m/github-push-action@master
